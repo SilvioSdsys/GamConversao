@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, get_current_user, require_permission
+from app.api.deps import get_current_user, require_permission
+from app.db.session import get_db
 from app.core.security import hash_password
 from app.models.user import User
 
@@ -14,7 +15,7 @@ class UserOut(BaseModel):
     username: str
     email: str | None = None
     is_active: bool
-    is_superuser: bool
+    is_superuser: bool | None = None
 
     class Config:
         from_attributes = True
@@ -37,20 +38,21 @@ class UserUpdate(BaseModel):
 
 @router.get("/me")
 def me(user=Depends(get_current_user)):
-    # devolve também roles/perms, se existirem
-    roles = [r.name for r in getattr(user, "roles", [])]
+    roles = [r.name for r in getattr(user, "roles", []) or []]
     perms = []
-    for r in getattr(user, "roles", []):
-        for p in getattr(r, "permissions", []):
-            if p.name:
+    for r in getattr(user, "roles", []) or []:
+        for p in getattr(r, "permissions", []) or []:
+            if getattr(p, "name", None):
                 perms.append(p.name)
-    if getattr(user, "is_superuser", False) and "admin.*" not in perms:
-        perms.append("admin.*")
+
+    if getattr(user, "is_superuser", False) and "admin:*" not in perms:
+        perms.append("admin:*")
+
     return {
         "id": user.id,
         "username": user.username,
         "email": getattr(user, "email", None),
-        "is_active": user.is_active,
+        "is_active": getattr(user, "is_active", True),
         "is_superuser": getattr(user, "is_superuser", False),
         "roles": sorted(set(roles)),
         "permissions": sorted(set(perms)),
@@ -60,7 +62,7 @@ def me(user=Depends(get_current_user)):
 @router.get("/", response_model=list[UserOut])
 def list_users(
     db: Session = Depends(get_db),
-    _=Depends(require_permission("user.read")),
+    _=Depends(require_permission("users:read")),
 ):
     return db.query(User).order_by(User.id.asc()).all()
 
@@ -69,7 +71,7 @@ def list_users(
 def get_user(
     user_id: int,
     db: Session = Depends(get_db),
-    _=Depends(require_permission("user.read")),
+    _=Depends(require_permission("users:read")),
 ):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -81,7 +83,7 @@ def get_user(
 def create_user(
     data: UserCreate,
     db: Session = Depends(get_db),
-    _=Depends(require_permission("user.create")),
+    _=Depends(require_permission("users:create")),
 ):
     exists = db.query(User).filter(User.username == data.username).first()
     if exists:
@@ -105,7 +107,7 @@ def update_user(
     user_id: int,
     data: UserUpdate,
     db: Session = Depends(get_db),
-    _=Depends(require_permission("user.update")),
+    _=Depends(require_permission("users:update")),
 ):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -129,7 +131,7 @@ def update_user(
 def delete_user(
     user_id: int,
     db: Session = Depends(get_db),
-    _=Depends(require_permission("user.delete")),
+    _=Depends(require_permission("users:delete")),
 ):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
