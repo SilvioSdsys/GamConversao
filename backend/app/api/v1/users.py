@@ -44,9 +44,6 @@ def me(user=Depends(get_current_user)):
             if getattr(p, "name", None):
                 perms.append(p.name)
 
-    if getattr(user, "is_superuser", False) and "admin:*" not in perms:
-        perms.append("admin:*")
-
     return {
         "id": user.id,
         "username": user.username,
