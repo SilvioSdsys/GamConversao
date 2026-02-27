@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, require_permission
+from app.api.deps import require_permission
+from app.db.session import get_db
 from app.models.role import Role
 
 router = APIRouter()
@@ -27,10 +28,7 @@ class RoleUpdate(BaseModel):
 
 
 @router.get("/", response_model=list[RoleOut])
-def list_roles(
-    db: Session = Depends(get_db),
-    _=Depends(require_permission("role.read")),
-):
+def list_roles(db: Session = Depends(get_db), _=Depends(require_permission("roles:read"))):
     return db.query(Role).order_by(Role.id.asc()).all()
 
 
@@ -38,7 +36,7 @@ def list_roles(
 def create_role(
     data: RoleCreate,
     db: Session = Depends(get_db),
-    _=Depends(require_permission("role.create")),
+    _=Depends(require_permission("roles:create")),
 ):
     exists = db.query(Role).filter(Role.name == data.name).first()
     if exists:
@@ -56,7 +54,7 @@ def update_role(
     role_id: int,
     data: RoleUpdate,
     db: Session = Depends(get_db),
-    _=Depends(require_permission("role.update")),
+    _=Depends(require_permission("roles:update")),
 ):
     role = db.query(Role).filter(Role.id == role_id).first()
     if not role:
@@ -72,7 +70,7 @@ def update_role(
 def delete_role(
     role_id: int,
     db: Session = Depends(get_db),
-    _=Depends(require_permission("role.delete")),
+    _=Depends(require_permission("roles:delete")),
 ):
     role = db.query(Role).filter(Role.id == role_id).first()
     if not role:
