@@ -19,18 +19,12 @@ def hash_password(password: str) -> str:
 
 
 def create_access_token(username: str) -> str:
-    """
-    Cria JWT de acesso com sub=username (compatível com decode_access_token()).
-    """
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.access_token_expire_minutes)
     payload = {"sub": username, "type": "access", "exp": expire}
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
 def decode_access_token(token: str) -> str:
-    """
-    Valida JWT e retorna username (sub).
-    """
     try:
         payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
     except JWTError as exc:
@@ -42,19 +36,12 @@ def decode_access_token(token: str) -> str:
     username = payload.get("sub")
     if not username:
         raise ValueError("Invalid access token payload")
-
     return username
 
 
 def generate_refresh_token() -> str:
-    """
-    Refresh token opaco (não-JWT) para armazenar no banco.
-    """
     return str(uuid4())
 
 
 def refresh_token_expires_at() -> datetime:
-    """
-    Calcula expiração do refresh token.
-    """
     return datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days)
