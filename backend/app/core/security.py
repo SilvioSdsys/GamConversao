@@ -1,4 +1,13 @@
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
+
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+
+from app.core.config import get_settings
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+settings = get_settings()
 from typing import Any
 from uuid import uuid4
 
@@ -19,6 +28,29 @@ def hash_password(password: str) -> str:
 
 
 def create_access_token(subject: str) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(
+        minutes=settings.access_token_expire_minutes
+    )
+    payload = {"sub": subject, "exp": expire}
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+
+def decode_access_token(token: str) -> str:
+    try:
+        payload = jwt.decode(
+            token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm]
+        )
+    except JWTError as exc:
+        raise ValueError("Invalid access token") from exc
+
+    username = payload.get("sub")
+    if not username:
+        raise ValueError("Invalid access token payload")
+    return username
+
+
+def generate_refresh_token() -> str:
+    return str(uuid4())
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     payload: dict[str, Any] = {"sub": subject, "type": "access", "exp": expire}
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)

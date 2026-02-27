@@ -3,6 +3,13 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from app.core.config import get_settings
+from app.db.base import Base
+from app.models import permission, refresh_token, role, user  # noqa: F401
+
+config = context.config
+settings = get_settings()
+config.set_main_option("sqlalchemy.url", settings.database_url)
 from app.core.config import settings
 from app.db.base import Base
 from app.models import rbac  # noqa: F401
@@ -18,6 +25,12 @@ target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+    )
     context.configure(url=url, target_metadata=target_metadata, literal_binds=True, compare_type=True)
 
     with context.begin_transaction():
@@ -32,6 +45,7 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        context.configure(connection=connection, target_metadata=target_metadata)
         context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
 
         with context.begin_transaction():
