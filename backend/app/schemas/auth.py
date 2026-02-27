@@ -3,6 +3,11 @@ from pydantic import BaseModel
 
 class LoginRequest(BaseModel):
     username: str
+from pydantic import BaseModel, EmailStr
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
     password: str
 
 

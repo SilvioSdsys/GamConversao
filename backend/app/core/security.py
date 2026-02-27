@@ -8,6 +8,15 @@ from app.core.config import get_settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 settings = get_settings()
+from typing import Any
+from uuid import uuid4
+
+from jose import jwt
+from passlib.context import CryptContext
+
+from app.core.config import settings
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -42,3 +51,14 @@ def decode_access_token(token: str) -> str:
 
 def generate_refresh_token() -> str:
     return str(uuid4())
+    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    payload: dict[str, Any] = {"sub": subject, "type": "access", "exp": expire}
+    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+
+
+def create_refresh_token(subject: str) -> tuple[str, datetime, str]:
+    expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    token_id = str(uuid4())
+    payload: dict[str, Any] = {"sub": subject, "jti": token_id, "type": "refresh", "exp": expire}
+    token = jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+    return token, expire, token_id

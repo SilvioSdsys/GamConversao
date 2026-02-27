@@ -10,6 +10,12 @@ from app.models import permission, refresh_token, role, user  # noqa: F401
 config = context.config
 settings = get_settings()
 config.set_main_option("sqlalchemy.url", settings.database_url)
+from app.core.config import settings
+from app.db.base import Base
+from app.models import rbac  # noqa: F401
+
+config = context.config
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -25,6 +31,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
     )
+    context.configure(url=url, target_metadata=target_metadata, literal_binds=True, compare_type=True)
 
     with context.begin_transaction():
         context.run_migrations()
@@ -39,6 +46,7 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
 
         with context.begin_transaction():
             context.run_migrations()
