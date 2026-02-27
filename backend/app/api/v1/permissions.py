@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, require_permission
+from app.api.deps import require_permission
+from app.db.session import get_db
 from app.models.permission import Permission
 
 router = APIRouter()
@@ -29,7 +30,7 @@ class PermissionUpdate(BaseModel):
 @router.get("/", response_model=list[PermissionOut])
 def list_permissions(
     db: Session = Depends(get_db),
-    _=Depends(require_permission("permission.read")),
+    _=Depends(require_permission("permissions:read")),
 ):
     return db.query(Permission).order_by(Permission.id.asc()).all()
 
@@ -38,7 +39,7 @@ def list_permissions(
 def create_permission(
     data: PermissionCreate,
     db: Session = Depends(get_db),
-    _=Depends(require_permission("permission.create")),
+    _=Depends(require_permission("permissions:create")),
 ):
     exists = db.query(Permission).filter(Permission.name == data.name).first()
     if exists:
@@ -56,7 +57,7 @@ def update_permission(
     permission_id: int,
     data: PermissionUpdate,
     db: Session = Depends(get_db),
-    _=Depends(require_permission("permission.update")),
+    _=Depends(require_permission("permissions:update")),
 ):
     perm = db.query(Permission).filter(Permission.id == permission_id).first()
     if not perm:
@@ -72,7 +73,7 @@ def update_permission(
 def delete_permission(
     permission_id: int,
     db: Session = Depends(get_db),
-    _=Depends(require_permission("permission.delete")),
+    _=Depends(require_permission("permissions:delete")),
 ):
     perm = db.query(Permission).filter(Permission.id == permission_id).first()
     if not perm:
