@@ -1,8 +1,3 @@
-from pydantic import BaseModel
-
-
-class LoginRequest(BaseModel):
-    username: str
 from pydantic import BaseModel, EmailStr
 
 

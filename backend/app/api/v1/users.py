@@ -4,35 +4,32 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, get_current_user, require_permission
 from app.core.security import hash_password
-from app.models.user import User
+from app.models import User
 
 router = APIRouter()
 
 
 class UserOut(BaseModel):
     id: int
-    username: str
-    email: str | None = None
+    email: str
+    full_name: str
     is_active: bool
-    is_superuser: bool | None = None
 
     class Config:
         from_attributes = True
 
 
 class UserCreate(BaseModel):
-    username: str
-    email: str | None = None
+    email: str
+    full_name: str
     password: str
     is_active: bool = True
-    is_superuser: bool = False
 
 
 class UserUpdate(BaseModel):
-    email: str | None = None
+    full_name: str | None = None
     password: str | None = None
     is_active: bool | None = None
-    is_superuser: bool | None = None
 
 
 @router.get("/me")
@@ -46,10 +43,9 @@ def me(user=Depends(get_current_user)):
 
     return {
         "id": user.id,
-        "username": user.username,
         "email": getattr(user, "email", None),
+        "full_name": getattr(user, "full_name", None),
         "is_active": getattr(user, "is_active", True),
-        "is_superuser": getattr(user, "is_superuser", False),
         "roles": sorted(set(roles)),
         "permissions": sorted(set(perms)),
     }
@@ -74,16 +70,15 @@ def create_user(
     db: Session = Depends(get_db),
     _=Depends(require_permission("users:create")),
 ):
-    exists = db.query(User).filter(User.username == data.username).first()
+    exists = db.query(User).filter(User.email == data.email).first()
     if exists:
-        raise HTTPException(status_code=400, detail="Username already exists")
+        raise HTTPException(status_code=400, detail="Email já cadastrado")
 
     user = User(
-        username=data.username,
         email=data.email,
-        password_hash=hash_password(data.password),
+        full_name=data.full_name,
+        hashed_password=hash_password(data.password),
         is_active=data.is_active,
-        is_superuser=data.is_superuser,
     )
     db.add(user)
     db.commit()
@@ -102,14 +97,12 @@ def update_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if data.email is not None:
-        user.email = data.email
-    if data.password:
-        user.password_hash = hash_password(data.password)
+    if data.full_name is not None:
+        user.full_name = data.full_name
+    if data.password is not None:
+        user.hashed_password = hash_password(data.password)
     if data.is_active is not None:
         user.is_active = data.is_active
-    if data.is_superuser is not None:
-        user.is_superuser = data.is_superuser
 
     db.commit()
     db.refresh(user)

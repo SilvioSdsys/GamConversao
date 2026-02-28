@@ -9,9 +9,7 @@ from app.core.security import (
     generate_refresh_token,
     verify_password,
 )
-from app.models.refresh_token import RefreshToken
-from app.models.role import Role
-from app.models.user import User
+from app.models import RefreshToken, Role, User
 
 settings = get_settings()
 

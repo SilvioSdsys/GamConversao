@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -11,15 +11,26 @@ from app.core.security import (
     generate_refresh_token,
     refresh_token_expires_at,
 )
-from app.models.user import User
-from app.models.refresh_token import RefreshToken
+from app.models import User, RefreshToken
 
 router = APIRouter()
 
 
 class LoginIn(BaseModel):
-    username: str
+    """Aceita email ou username (ambos são usados como email para login)."""
+    email: str | None = None
+    username: str | None = None
     password: str
+
+    @model_validator(mode="after")
+    def require_email_or_username(self):
+        if not self.email and not self.username:
+            raise ValueError("Envie 'email' ou 'username'")
+        return self
+
+    def get_login_email(self) -> str:
+        """E-mail a usar na busca (prioridade: email, depois username)."""
+        return (self.email or self.username or "").strip()
 
 
 class TokenOut(BaseModel):
@@ -52,22 +63,22 @@ def _load_user_permissions(user: User) -> list[str]:
 
 @router.post("/login", response_model=TokenOut)
 def login(data: LoginIn, db: Session = Depends(get_db)):
-    user: User | None = db.query(User).filter(User.username == data.username).first()
+    user: User | None = db.query(User).filter(User.email == data.get_login_email()).first()
 
     if not user or not getattr(user, "is_active", True):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
-    if not verify_password(data.password, user.password_hash):
+    if not verify_password(data.password, user.hashed_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
-    access = create_access_token(user.username)
+    access = create_access_token(user.email)
 
     # Refresh token opaco salvo no banco
     raw_refresh = generate_refresh_token()
     expires_at = refresh_token_expires_at()
 
     rt = RefreshToken(
-        token=raw_refresh,
+        token_id=raw_refresh,
         user_id=user.id,
         expires_at=expires_at,
         revoked=False,
@@ -81,7 +92,7 @@ def login(data: LoginIn, db: Session = Depends(get_db)):
 @router.post("/refresh", response_model=TokenOut)
 def refresh(data: RefreshIn, db: Session = Depends(get_db)):
     rt: RefreshToken | None = (
-        db.query(RefreshToken).filter(RefreshToken.token == data.refresh_token).first()
+        db.query(RefreshToken).filter(RefreshToken.token_id == data.refresh_token).first()
     )
 
     if not rt or rt.revoked:
@@ -103,7 +114,7 @@ def refresh(data: RefreshIn, db: Session = Depends(get_db)):
     new_expires = refresh_token_expires_at()
 
     new_rt = RefreshToken(
-        token=new_refresh,
+        token_id=new_refresh,
         user_id=user.id,
         expires_at=new_expires,
         revoked=False,
@@ -111,14 +122,14 @@ def refresh(data: RefreshIn, db: Session = Depends(get_db)):
     db.add(new_rt)
     db.commit()
 
-    access = create_access_token(user.username)
+    access = create_access_token(user.email)
     return TokenOut(access_token=access, refresh_token=new_refresh)
 
 
 @router.post("/logout")
 def logout(data: LogoutIn, db: Session = Depends(get_db)):
     rt: RefreshToken | None = (
-        db.query(RefreshToken).filter(RefreshToken.token == data.refresh_token).first()
+        db.query(RefreshToken).filter(RefreshToken.token_id == data.refresh_token).first()
     )
 
     if rt:

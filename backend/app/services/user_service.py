@@ -1,8 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models.role import Role
-from app.models.user import User
+from app.models import Role, User
 
 
 class UserService:
@@ -10,9 +9,13 @@ class UserService:
         self.db = db
 
     def get_by_username(self, username: str) -> User | None:
+        """Busca por email (o JWT 'sub' é o email). Mantido o nome por compat com deps."""
+        return self.get_by_email(username)
+
+    def get_by_email(self, email: str) -> User | None:
         return self.db.scalar(
             select(User)
-            .where(User.username == username)
+            .where(User.email == email)
             .options(selectinload(User.roles).selectinload(Role.permissions))
         )
 

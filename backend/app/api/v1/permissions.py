@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
 from app.db.session import get_db
-from app.models.permission import Permission
+from app.models import Permission
 
 router = APIRouter()
 
