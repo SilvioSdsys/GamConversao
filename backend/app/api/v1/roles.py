@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
@@ -29,7 +30,7 @@ class RoleUpdate(BaseModel):
 
 @router.get("/", response_model=list[RoleOut])
 def list_roles(db: Session = Depends(get_db), _=Depends(require_permission("roles:read"))):
-    return db.query(Role).order_by(Role.id.asc()).all()
+    return db.execute(select(Role).order_by(Role.id.asc())).scalars().all()
 
 
 @router.post("/", response_model=RoleOut, status_code=status.HTTP_201_CREATED)
@@ -38,7 +39,7 @@ def create_role(
     db: Session = Depends(get_db),
     _=Depends(require_permission("roles:create")),
 ):
-    exists = db.query(Role).filter(Role.name == data.name).first()
+    exists = db.execute(select(Role).where(Role.name == data.name)).scalar_one_or_none()
     if exists:
         raise HTTPException(status_code=400, detail="Role already exists")
 
@@ -56,7 +57,7 @@ def update_role(
     db: Session = Depends(get_db),
     _=Depends(require_permission("roles:update")),
 ):
-    role = db.query(Role).filter(Role.id == role_id).first()
+    role = db.execute(select(Role).where(Role.id == role_id)).scalar_one_or_none()
     if not role:
         raise HTTPException(status_code=404, detail="Role not found")
 
@@ -72,7 +73,7 @@ def delete_role(
     db: Session = Depends(get_db),
     _=Depends(require_permission("roles:delete")),
 ):
-    role = db.query(Role).filter(Role.id == role_id).first()
+    role = db.execute(select(Role).where(Role.id == role_id)).scalar_one_or_none()
     if not role:
         raise HTTPException(status_code=404, detail="Role not found")
 

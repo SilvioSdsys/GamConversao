@@ -8,45 +8,68 @@ from app.core.config import get_settings
 
 settings = get_settings()
 
-# bcrypt limita a senha a 72 bytes
-_MAX_PASSWORD_BYTES = 72
+_MAX_PASSWORD_BYTES = 72  # Limite interno do bcrypt
 
 
 def _prepare_password(password: str) -> bytes:
     pwd_bytes = password.encode("utf-8")
-    return pwd_bytes[: _MAX_PASSWORD_BYTES] if len(pwd_bytes) > _MAX_PASSWORD_BYTES else pwd_bytes
+    return pwd_bytes[:_MAX_PASSWORD_BYTES]
 
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return bcrypt.checkpw(_prepare_password(plain_password), hashed_password.encode("utf-8"))
+def verify_password(plain: str, hashed: str) -> bool:
+    return bcrypt.checkpw(_prepare_password(plain), hashed.encode("utf-8"))
 
 
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(_prepare_password(password), bcrypt.gensalt()).decode("utf-8")
 
 
-def create_access_token(username: str) -> str:
+def create_access_token(subject: str) -> str:
+    """
+    Gera um JWT de acesso.
+    - sub: email do usuário
+    - jti: ID único do token (usado para blacklist futura)
+    - type: 'access' (impede uso de refresh token como access)
+    - iss: issuer da aplicação
+    """
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.access_token_expire_minutes)
-    payload = {"sub": username, "type": "access", "exp": expire}
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": subject,
+        "jti": str(uuid4()),
+        "type": "access",
+        "iss": settings.project_name,
+        "exp": expire,
+        "iat": now,
+    }
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
-def decode_access_token(token: str) -> str:
+def decode_access_token(token: str) -> dict:
+    """
+    Decodifica e valida um access token.
+    Retorna o payload completo para permitir verificação futura de jti.
+    """
     try:
-        payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret_key,
+            algorithms=[settings.jwt_algorithm],
+        )
     except JWTError as exc:
-        raise ValueError("Invalid access token") from exc
+        raise ValueError("Token inválido ou expirado") from exc
 
     if payload.get("type") != "access":
-        raise ValueError("Invalid token type")
+        raise ValueError("Tipo de token inválido")
 
-    username = payload.get("sub")
-    if not username:
-        raise ValueError("Invalid access token payload")
-    return username
+    if not payload.get("sub"):
+        raise ValueError("Token sem subject")
+
+    return payload
 
 
 def generate_refresh_token() -> str:
+    """Gera um UUID v4 opaco para uso como refresh token."""
     return str(uuid4())
 
 

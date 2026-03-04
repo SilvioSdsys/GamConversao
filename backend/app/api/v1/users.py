@@ -1,67 +1,96 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, status
+from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, get_current_user, require_permission
-from app.core.security import hash_password
 from app.models import User
+from app.schemas.user import UserCreate, UserOut, UserUpdate, _validate_password_strength
+from app.services import user_service
 
 router = APIRouter()
 
 
-class UserOut(BaseModel):
-    id: int
-    email: str
-    full_name: str
-    is_active: bool
-
-    class Config:
-        from_attributes = True
-
-
-class UserCreate(BaseModel):
-    email: str
-    full_name: str
-    password: str
-    is_active: bool = True
-
-
-class UserUpdate(BaseModel):
+class SelfUpdate(BaseModel):
     full_name: str | None = None
     password: str | None = None
-    is_active: bool | None = None
+
+    @field_validator("password")
+    @classmethod
+    def password_strength(cls, v: str | None) -> str | None:
+        if v is not None:
+            return _validate_password_strength(v)
+        return v
 
 
-@router.get("/me")
-def me(user=Depends(get_current_user)):
-    roles = [r.name for r in getattr(user, "roles", []) or []]
-    perms = []
-    for r in getattr(user, "roles", []) or []:
-        for p in getattr(r, "permissions", []) or []:
-            if getattr(p, "name", None):
-                perms.append(p.name)
+@router.get("/me", response_model=UserOut)
+def me(user: User = Depends(get_current_user)):
+    return UserOut(
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        is_active=user.is_active,
+        roles=sorted({r.name for r in user.roles}),
+        permissions=sorted({p.name for r in user.roles for p in r.permissions}),
+    )
 
-    return {
-        "id": user.id,
-        "email": getattr(user, "email", None),
-        "full_name": getattr(user, "full_name", None),
-        "is_active": getattr(user, "is_active", True),
-        "roles": sorted(set(roles)),
-        "permissions": sorted(set(perms)),
-    }
+
+@router.put("/me", response_model=UserOut)
+def update_me(
+    data: SelfUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Permite que o próprio usuário atualize nome e senha."""
+    u = user_service.update_user(
+        db,
+        user,
+        full_name=data.full_name,
+        password=data.password,
+    )
+    return UserOut(
+        id=u.id,
+        email=u.email,
+        full_name=u.full_name,
+        is_active=u.is_active,
+        roles=sorted({r.name for r in u.roles}),
+        permissions=sorted({p.name for r in u.roles for p in r.permissions}),
+    )
 
 
 @router.get("/", response_model=list[UserOut])
-def list_users(db: Session = Depends(get_db), _=Depends(require_permission("users:read"))):
-    return db.query(User).order_by(User.id.asc()).all()
+def list_users(
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("users:read")),
+):
+    users = user_service.list_users(db)
+    return [
+        UserOut(
+            id=u.id,
+            email=u.email,
+            full_name=u.full_name,
+            is_active=u.is_active,
+            roles=sorted({r.name for r in u.roles}),
+            permissions=sorted({p.name for r in u.roles for p in r.permissions}),
+        )
+        for u in users
+    ]
 
 
 @router.get("/{user_id}", response_model=UserOut)
-def get_user(user_id: int, db: Session = Depends(get_db), _=Depends(require_permission("users:read"))):
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
+def get_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("users:read")),
+):
+    u = user_service.get_user_or_404(db, user_id)
+    return UserOut(
+        id=u.id,
+        email=u.email,
+        full_name=u.full_name,
+        is_active=u.is_active,
+        roles=sorted({r.name for r in u.roles}),
+        permissions=sorted({p.name for r in u.roles for p in r.permissions}),
+    )
 
 
 @router.post("/", response_model=UserOut, status_code=status.HTTP_201_CREATED)
@@ -70,20 +99,22 @@ def create_user(
     db: Session = Depends(get_db),
     _=Depends(require_permission("users:create")),
 ):
-    exists = db.query(User).filter(User.email == data.email).first()
-    if exists:
-        raise HTTPException(status_code=400, detail="Email já cadastrado")
-
-    user = User(
+    u = user_service.create_user(
+        db,
         email=data.email,
         full_name=data.full_name,
-        hashed_password=hash_password(data.password),
+        password=data.password,
         is_active=data.is_active,
+        role_ids=data.role_ids,
     )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user
+    return UserOut(
+        id=u.id,
+        email=u.email,
+        full_name=u.full_name,
+        is_active=u.is_active,
+        roles=sorted({r.name for r in u.roles}),
+        permissions=sorted({p.name for r in u.roles for p in r.permissions}),
+    )
 
 
 @router.put("/{user_id}", response_model=UserOut)
@@ -93,28 +124,30 @@ def update_user(
     db: Session = Depends(get_db),
     _=Depends(require_permission("users:update")),
 ):
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    user = user_service.get_user_or_404(db, user_id)
+    u = user_service.update_user(
+        db,
+        user,
+        full_name=data.full_name,
+        is_active=data.is_active,
+        password=data.password,
+        role_ids=data.role_ids,
+    )
+    return UserOut(
+        id=u.id,
+        email=u.email,
+        full_name=u.full_name,
+        is_active=u.is_active,
+        roles=sorted({r.name for r in u.roles}),
+        permissions=sorted({p.name for r in u.roles for p in r.permissions}),
+    )
 
-    if data.full_name is not None:
-        user.full_name = data.full_name
-    if data.password is not None:
-        user.hashed_password = hash_password(data.password)
-    if data.is_active is not None:
-        user.is_active = data.is_active
 
-    db.commit()
-    db.refresh(user)
-    return user
-
-
-@router.delete("/{user_id}")
-def delete_user(user_id: int, db: Session = Depends(get_db), _=Depends(require_permission("users:delete"))):
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    db.delete(user)
-    db.commit()
-    return {"ok": True}
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("users:delete")),
+):
+    user = user_service.get_user_or_404(db, user_id)
+    user_service.delete_user(db, user)

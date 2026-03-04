@@ -1,47 +1,69 @@
-from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy.orm import Session
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import select
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.security import decode_access_token
 from app.db.session import get_db
-from app.services.user_service import UserService
-from app.services.rbac_service import get_user_permissions
+from app.models import Role, User
+
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
-def get_current_user(request: Request, db: Session = Depends(get_db)):
-    if getattr(request.state, "user", None) is not None:
-        return request.state.user
-
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
-
-    token = auth_header.replace("Bearer ", "", 1).strip()
-    if not token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    db: Session = Depends(get_db),
+) -> User:
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token de autenticação ausente",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     try:
-        username = decode_access_token(token)
-    except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
+        payload = decode_access_token(credentials.credentials)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(exc),
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
-    user = UserService(db).get_by_username(username)
-    if not user or not getattr(user, "is_active", True):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    email: str = payload["sub"]
 
-    request.state.user = user
+    user = db.execute(
+        select(User)
+        .where(User.email == email, User.deleted_at.is_(None))
+        .options(selectinload(User.roles).selectinload(Role.permissions))
+    ).scalar_one_or_none()
+
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Usuário inativo ou não encontrado",
+        )
+
     return user
 
 
-def require_permission(permission: str):
-    def checker(request: Request, user=Depends(get_current_user)):
-        if getattr(request.state, "permissions", None) is None:
-            request.state.permissions = get_user_permissions(user)
+def require_permission(permission_name: str):
+    """
+    Dependência reutilizável para proteção por permissão.
+    Uso: _=Depends(require_permission("users:read"))
+    """
 
-        perms: set[str] = request.state.permissions
-
-        if permission not in perms:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
-
+    def _check(user: User = Depends(get_current_user)) -> User:
+        user_permissions = {
+            perm.name
+            for role in user.roles
+            for perm in role.permissions
+        }
+        if permission_name not in user_permissions:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Permissão insuficiente: '{permission_name}' é necessária",
+            )
         return user
 
-    return checker
+    return _check

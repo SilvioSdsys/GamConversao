@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, model_validator
@@ -11,7 +11,13 @@ from app.core.security import (
     generate_refresh_token,
     refresh_token_expires_at,
 )
+from app.core.audit import log_event
 from app.models import User, RefreshToken
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from starlette.requests import Request
+
+limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter()
 
@@ -62,13 +68,32 @@ def _load_user_permissions(user: User) -> list[str]:
 
 
 @router.post("/login", response_model=TokenOut)
-def login(data: LoginIn, db: Session = Depends(get_db)):
-    user: User | None = db.query(User).filter(User.email == data.get_login_email()).first()
+@limiter.limit("5/minute")
+def login(request: Request, data: LoginIn, db: Session = Depends(get_db)):
+    from sqlalchemy import select
+
+    email = data.get_login_email()
+    user: User | None = db.execute(
+        select(User).where(User.email == email, User.deleted_at.is_(None))
+    ).scalar_one_or_none()
 
     if not user or not getattr(user, "is_active", True):
+        log_event(
+            "login",
+            "failure",
+            ip=request.client.host if request.client else None,
+            detail="invalid_credentials",
+        )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     if not verify_password(data.password, user.hashed_password):
+        log_event(
+            "login",
+            "failure",
+            user_id=user.id,
+            ip=request.client.host if request.client else None,
+            detail="invalid_credentials",
+        )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     access = create_access_token(user.email)
@@ -86,25 +111,35 @@ def login(data: LoginIn, db: Session = Depends(get_db)):
     db.add(rt)
     db.commit()
 
+    log_event(
+        "login",
+        "success",
+        user_id=user.id,
+        ip=request.client.host if request.client else None,
+    )
+
     return TokenOut(access_token=access, refresh_token=raw_refresh)
 
 
 @router.post("/refresh", response_model=TokenOut)
 def refresh(data: RefreshIn, db: Session = Depends(get_db)):
-    rt: RefreshToken | None = (
-        db.query(RefreshToken).filter(RefreshToken.token_id == data.refresh_token).first()
-    )
+    from sqlalchemy import select
+
+    rt: RefreshToken | None = db.execute(
+        select(RefreshToken).where(RefreshToken.token_id == data.refresh_token)
+    ).scalar_one_or_none()
 
     if not rt or rt.revoked:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
 
-    # expires_at pode ser timezone-aware ou naive dependendo do seu model/migration
-    # aqui tratamos de forma simples:
-    now = datetime.utcnow()
-    if rt.expires_at < now:
+    now = datetime.now(timezone.utc)
+    expires = rt.expires_at if rt.expires_at.tzinfo else rt.expires_at.replace(tzinfo=timezone.utc)
+    if expires < now:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Expired refresh token")
 
-    user: User | None = db.query(User).filter(User.id == rt.user_id).first()
+    user: User | None = db.execute(
+        select(User).where(User.id == rt.user_id)
+    ).scalar_one_or_none()
     if not user or not getattr(user, "is_active", True):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user")
 
@@ -128,9 +163,11 @@ def refresh(data: RefreshIn, db: Session = Depends(get_db)):
 
 @router.post("/logout")
 def logout(data: LogoutIn, db: Session = Depends(get_db)):
-    rt: RefreshToken | None = (
-        db.query(RefreshToken).filter(RefreshToken.token_id == data.refresh_token).first()
-    )
+    from sqlalchemy import select
+
+    rt: RefreshToken | None = db.execute(
+        select(RefreshToken).where(RefreshToken.token_id == data.refresh_token)
+    ).scalar_one_or_none()
 
     if rt:
         rt.revoked = True

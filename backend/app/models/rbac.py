@@ -1,70 +1,79 @@
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Table, UniqueConstraint, func
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Table,
+    UniqueConstraint,
+)
+from sqlalchemy.orm import relationship
 
 from app.db.base import Base
 
+# Tabelas de associação Many-to-Many
 user_roles = Table(
     "user_roles",
     Base.metadata,
-    Column("user_id", ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
-    Column("role_id", ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
+    Column("user_id", Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+    Column("role_id", Integer, ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
 )
 
 role_permissions = Table(
     "role_permissions",
     Base.metadata,
-    Column("role_id", ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
-    Column("permission_id", ForeignKey("permissions.id", ondelete="CASCADE"), primary_key=True),
+    Column("role_id", Integer, ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
+    Column("permission_id", Integer, ForeignKey("permissions.id", ondelete="CASCADE"), primary_key=True),
 )
 
 
 class User(Base):
     __tablename__ = "users"
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
-    full_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    full_name = Column(String(255), nullable=False)
+    hashed_password = Column(String(255), nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    deleted_at = Column(DateTime(timezone=True), nullable=True, default=None)
+    roles = relationship("Role", secondary=user_roles, back_populates="users", lazy="selectin")
+    refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
 
-    roles: Mapped[list["Role"]] = relationship(secondary=user_roles, back_populates="users")
-    refresh_tokens: Mapped[list["RefreshToken"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    @property
+    def is_deleted(self) -> bool:
+        return self.deleted_at is not None
 
 
 class Role(Base):
     __tablename__ = "roles"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-
-    users: Mapped[list[User]] = relationship(secondary=user_roles, back_populates="roles")
-    permissions: Mapped[list["Permission"]] = relationship(secondary=role_permissions, back_populates="roles")
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(50), unique=True, nullable=False, index=True)
+    description = Column(String(255), nullable=True)
+    users = relationship("User", secondary=user_roles, back_populates="roles")
+    permissions = relationship("Permission", secondary=role_permissions, back_populates="roles", lazy="selectin")
 
 
 class Permission(Base):
     __tablename__ = "permissions"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-
-    roles: Mapped[list[Role]] = relationship(secondary=role_permissions, back_populates="permissions")
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), unique=True, nullable=False, index=True)
+    description = Column(String(255), nullable=True)
+    roles = relationship("Role", secondary=role_permissions, back_populates="permissions")
 
 
 class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
-    __table_args__ = (UniqueConstraint("token_id", name="uq_refresh_tokens_token_id"),)
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    token_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    revoked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-    user: Mapped[User] = relationship(back_populates="refresh_tokens")
+    id = Column(Integer, primary_key=True, index=True)
+    token_id = Column(String(36), unique=True, nullable=False, index=True)  # UUID v4
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    revoked = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    user = relationship("User", back_populates="refresh_tokens")
