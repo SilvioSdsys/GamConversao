@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import Optional
 
 from sqlalchemy import (
     Boolean,
@@ -8,13 +9,14 @@ from sqlalchemy import (
     Integer,
     String,
     Table,
-    UniqueConstraint,
+    Text,
 )
+from sqlalchemy.types import JSON
 from sqlalchemy.orm import relationship
 
 from app.db.base import Base
 
-# Tabelas de associação Many-to-Many
+# Tabelas de associacao Many-to-Many
 user_roles = Table(
     "user_roles",
     Base.metadata,
@@ -40,12 +42,27 @@ class User(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     deleted_at = Column(DateTime(timezone=True), nullable=True, default=None)
+
+    # Lockout de conta
+    failed_login_attempts = Column(Integer, default=0, nullable=False)
+    locked_until = Column(DateTime(timezone=True), nullable=True, default=None)
+
     roles = relationship("Role", secondary=user_roles, back_populates="users", lazy="selectin")
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
 
     @property
     def is_deleted(self) -> bool:
         return self.deleted_at is not None
+
+    @property
+    def is_locked(self) -> bool:
+        if self.locked_until is None:
+            return False
+        lu = self.locked_until
+        # SQLite devolve datetime sem timezone (naive) — normaliza para UTC
+        if lu.tzinfo is None:
+            lu = lu.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) < lu
 
 
 class Role(Base):
@@ -76,4 +93,26 @@ class RefreshToken(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False)
     revoked = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    ip_address = Column(String(45), nullable=True)
+    user_agent = Column(String(512), nullable=True)
+    device_name = Column(String(100), nullable=True)
     user = relationship("User", back_populates="refresh_tokens")
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    user_email = Column(String(255), nullable=True)
+    action = Column(String(50), nullable=False, index=True)
+    resource_type = Column(String(50), nullable=True, index=True)
+    resource_id = Column(String(100), nullable=True)
+    result = Column(String(20), nullable=False)
+    ip_address = Column(String(45), nullable=True)
+    user_agent = Column(String(512), nullable=True)
+    changes = Column(JSON, nullable=True)
+    detail = Column(Text, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )

@@ -1,6 +1,9 @@
+import logging
+
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -8,6 +11,7 @@ from sqlalchemy import select
 
 from app.api.v1.router import api_router
 from app.core.config import get_settings
+from app.core.redis import redis_ping
 from app.core.security import hash_password
 from app.db.session import SessionLocal
 from app.models import Role, User
@@ -44,12 +48,39 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if settings.environment == "production":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger = logging.getLogger(__name__)
+    logger.error("Unhandled error: %s", exc, exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Erro interno. Tente novamente mais tarde."},
+    )
+
+
 app.include_router(api_router, prefix=settings.api_v1_prefix)
 
 
 @app.get("/health")
 def healthcheck():
-    return {"status": "ok", "environment": settings.environment}
+    return {
+        "status": "ok",
+        "environment": settings.environment.lower(),
+        "redis": "ok" if redis_ping() else "unavailable",
+    }
 
 
 @app.on_event("startup")
@@ -81,6 +112,7 @@ def startup_seed() -> None:
     finally:
         db.close()
 
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(_run_token_cleanup, "interval", hours=24, id="token_cleanup")
-    scheduler.start()
+    if settings.environment != "testing":
+        scheduler = BackgroundScheduler()
+        scheduler.add_job(_run_token_cleanup, "interval", hours=24, id="token_cleanup")
+        scheduler.start()

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
@@ -37,6 +37,7 @@ def me(user: User = Depends(get_current_user)):
 @router.put("/me", response_model=UserOut)
 def update_me(
     data: SelfUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -46,6 +47,8 @@ def update_me(
         user,
         full_name=data.full_name,
         password=data.password,
+        current_user=user,
+        request=request,
     )
     return UserOut(
         id=u.id,
@@ -96,8 +99,9 @@ def get_user(
 @router.post("/", response_model=UserOut, status_code=status.HTTP_201_CREATED)
 def create_user(
     data: UserCreate,
+    request: Request,
     db: Session = Depends(get_db),
-    _=Depends(require_permission("users:create")),
+    current_user: User = Depends(require_permission("users:create")),
 ):
     u = user_service.create_user(
         db,
@@ -106,6 +110,8 @@ def create_user(
         password=data.password,
         is_active=data.is_active,
         role_ids=data.role_ids,
+        current_user=current_user,
+        request=request,
     )
     return UserOut(
         id=u.id,
@@ -121,8 +127,9 @@ def create_user(
 def update_user(
     user_id: int,
     data: UserUpdate,
+    request: Request,
     db: Session = Depends(get_db),
-    _=Depends(require_permission("users:update")),
+    current_user: User = Depends(require_permission("users:update")),
 ):
     user = user_service.get_user_or_404(db, user_id)
     u = user_service.update_user(
@@ -132,6 +139,8 @@ def update_user(
         is_active=data.is_active,
         password=data.password,
         role_ids=data.role_ids,
+        current_user=current_user,
+        request=request,
     )
     return UserOut(
         id=u.id,
@@ -146,8 +155,9 @@ def update_user(
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_user(
     user_id: int,
+    request: Request,
     db: Session = Depends(get_db),
-    _=Depends(require_permission("users:delete")),
+    current_user: User = Depends(require_permission("users:delete")),
 ):
     user = user_service.get_user_or_404(db, user_id)
-    user_service.delete_user(db, user)
+    user_service.delete_user(db, user, current_user=current_user, request=request)

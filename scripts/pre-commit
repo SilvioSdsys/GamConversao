@@ -1,0 +1,9 @@
+#!/bin/sh
+# GamConversao - pre-commit hook
+# Este arquivo fica em: .git/hooks/pre-commit
+# Instalacao: copie este arquivo para .git/hooks/pre-commit
+# O Git no Windows usa Git Bash para rodar este hook,
+# que por sua vez chama o script PowerShell real.
+
+exec powershell.exe -NoProfile -ExecutionPolicy Bypass \
+  -File "$(git rev-parse --show-toplevel)/scripts/pre-commit.ps1"

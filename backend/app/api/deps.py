@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.security import decode_access_token
 from app.db.session import get_db
 from app.models import Role, User
+from app.services.jwt_blacklist_service import is_token_blacklisted
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -27,6 +28,14 @@ def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=str(exc),
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    jti = payload.get("jti")
+    if jti and is_token_blacklisted(jti):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token revogado. Faça login novamente.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 

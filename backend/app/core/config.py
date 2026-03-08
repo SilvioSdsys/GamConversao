@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     # Em produção, liste as origens exatas: "https://app.empresa.com,https://admin.empresa.com"
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
 
+    # ── Redis ──────────────────────────────────────────────────
+    redis_url: str = "redis://localhost:6379/0"
+
+    # ── Bloqueio de conta e Audit Log ──────────────────────────
+    account_lockout_attempts: int = 5
+    account_lockout_minutes: int = 15
+    audit_log_retention_days: int = 90
+
     @field_validator("jwt_secret_key")
     @classmethod
     def jwt_secret_must_be_strong(cls, v: str) -> str:

@@ -21,6 +21,11 @@ DEFAULT_PERMISSIONS = {
     "permissions:read": "Listar e visualizar permissões",
     "permissions:update": "Atualizar permissões",
     "permissions:delete": "Remover permissões",
+
+    # Audit e sessões
+    "audit:read": "Visualizar logs de auditoria",
+    "sessions:read": "Listar sessões ativas",
+    "sessions:revoke": "Revogar sessões",
 }
 
 
