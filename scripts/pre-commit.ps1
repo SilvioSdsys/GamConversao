@@ -39,11 +39,29 @@ if ($HAS_BACKEND -gt 0) {
         Ok "Sem queries legadas (db.query)"
     }
 
-    # 2. create_all() proibido
-    $createAll = Get-ChildItem "$ROOT\backend\app" -Recurse -Filter "*.py" |
-                 Select-String "create_all" -ErrorAction SilentlyContinue
-    if ($createAll) {
+    # 2. create_all() proibido (ignora comentarios # e texto dentro de docstrings)
+    $inDocstring = $false
+    $createAll = @()
+    $pyFiles = Get-ChildItem "$ROOT\backend\app" -Recurse -Filter "*.py"
+    foreach ($file in $pyFiles) {
+        $lines = Get-Content $file.FullName
+        $inDocstring = $false
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            $line = $lines[$i]
+            if ($line -match '"""') { $inDocstring = -not $inDocstring }
+            if ($inDocstring) { continue }
+            if ($line -match "create_all" -and
+                $line -notmatch "^\s*#" -and
+                $line -notmatch "#.*create_all") {
+                $createAll += "$($file.Name):$($i+1)  $($line.Trim())"
+            }
+        }
+    }
+    if ($createAll.Count -gt 0) {
         Fail "create_all() encontrado - use apenas Alembic"
+        $createAll | Select-Object -First 3 | ForEach-Object {
+            Write-Host "       $_" -ForegroundColor DarkGray
+        }
     } else {
         Ok "Sem create_all()"
     }
@@ -69,12 +87,17 @@ if ($HAS_BACKEND -gt 0) {
     $testsDir   = "$ROOT\backend\tests"
     if ((Test-Path $venvPytest) -and (Test-Path $testsDir)) {
         Write-Host "  [..] Rodando pytest..." -ForegroundColor DarkGray
-        $result = & $venvPytest "$testsDir" -q --tb=no 2>&1 | Select-String "passed|failed|error" | Select-Object -Last 1
+        Push-Location "$ROOT\backend"
+        $env:PYTHONPATH = "$ROOT\backend"
+        $pytestOut = & $venvPytest tests\ -q --tb=no 2>&1
+        $env:PYTHONPATH = $null
+        Pop-Location
+        $summary = $pytestOut | Select-String "passed|failed|error" | Select-Object -Last 1
         if ($LASTEXITCODE -eq 0) {
-            Ok "pytest passou ($result)"
+            Ok "pytest passou ($summary)"
         } else {
             Fail "pytest falhou - corrija os testes antes de commitar"
-            Write-Host "       $result" -ForegroundColor DarkGray
+            Write-Host "       $summary" -ForegroundColor DarkGray
         }
     } else {
         Warn "pytest ou pasta tests nao encontrado - pulando testes de backend"
@@ -87,23 +110,38 @@ if ($HAS_BACKEND -gt 0) {
 if ($HAS_FRONTEND -gt 0) {
     Sep "Frontend"
 
-    # 6. localStorage proibido
+    # 6. localStorage proibido (ignora linhas comentadas e comentarios inline)
     $localStorage = Get-ChildItem "$ROOT\frontend\src" -Recurse -Include "*.ts","*.tsx" |
-                    Select-String "localStorage" -ErrorAction SilentlyContinue
+                    Select-String "localStorage" -ErrorAction SilentlyContinue |
+                    Where-Object {
+                        $_.Line -notmatch "^\s*//" -and       # ignora linha de comentario
+                        $_.Line -notmatch "^\s*\*" -and       # ignora bloco de comentario
+                        $_.Line -notmatch "//.*localStorage"  # ignora comentario inline
+                    }
     if ($localStorage) {
         Fail "localStorage encontrado - tokens devem ficar apenas em memoria (Zustand)"
         $localStorage | Select-Object -First 3 | ForEach-Object {
-            Write-Host "       $($_.Filename):$($_.LineNumber)" -ForegroundColor DarkGray
+            Write-Host "       $($_.Filename):$($_.LineNumber)  $($_.Line.Trim())" -ForegroundColor DarkGray
         }
     } else {
         Ok "Sem localStorage"
     }
 
-    # 7. URL hardcoded
+    # 7. URL hardcoded (ignora comentarios e fallbacks de desenvolvimento)
     $hardUrl = Get-ChildItem "$ROOT\frontend\src" -Recurse -Include "*.ts","*.tsx" |
-               Select-String "localhost:8000" -ErrorAction SilentlyContinue
+               Select-String "localhost:8000" -ErrorAction SilentlyContinue |
+               Where-Object {
+                   $_.Line -notmatch "^\s*//" -and            # ignora linha de comentario
+                   $_.Line -notmatch "^\s*\*" -and            # ignora bloco de comentario
+                   $_.Line -notmatch "//.*localhost" -and     # ignora comentario inline
+                   $_.Line -notmatch "\|\|.*localhost" -and   # ignora fallback (|| 'http://...')
+                   $_.Line -notmatch "import\.meta\.env"      # ignora uso correto com env
+               }
     if ($hardUrl) {
-        Fail "URL hardcoded (localhost:8000) - use VITE_API_URL do .env"
+        Fail "URL hardcoded (localhost:8000) sem fallback de env - use VITE_API_URL"
+        $hardUrl | Select-Object -First 3 | ForEach-Object {
+            Write-Host "       $($_.Filename):$($_.LineNumber)  $($_.Line.Trim())" -ForegroundColor DarkGray
+        }
     } else {
         Ok "Sem URLs hardcoded"
     }
@@ -135,15 +173,21 @@ if ($HAS_FRONTEND -gt 0) {
         Warn "node_modules nao encontrado - pulando TypeScript check"
     }
 
-    # 10. ESLint
+    # 10. ESLint (bloqueia apenas erros, warnings sao informativos)
     if (Test-Path $nodeModules) {
         Write-Host "  [..] Rodando ESLint..." -ForegroundColor DarkGray
         Push-Location "$ROOT\frontend"
         $lintOut = npm run lint --silent 2>&1
         Pop-Location
-        $lintErrors = $lintOut | Where-Object { $_ -match "\s+error\s+" }
+        $lintErrors   = $lintOut | Where-Object { $_ -match "\s+error\s+" }
+        $lintWarnings = $lintOut | Where-Object { $_ -match "\s+warning\s+" }
         if ($lintErrors) {
             Fail "ESLint encontrou erros - execute: npm run lint"
+            $lintErrors | Select-Object -First 5 | ForEach-Object {
+                Write-Host "       $_" -ForegroundColor DarkGray
+            }
+        } elseif ($lintWarnings) {
+            Warn "ESLint tem avisos (nao bloqueante) - execute: npm run lint"
         } else {
             Ok "ESLint sem erros"
         }
