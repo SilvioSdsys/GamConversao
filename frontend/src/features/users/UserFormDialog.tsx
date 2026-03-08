@@ -95,7 +95,6 @@ export function UserFormDialog({
   })
 
   // eslint-disable-next-line react-hooks/incompatible-library -- React Hook Form watch()
-  // eslint-disable-next-line react-hooks/incompatible-library -- React Hook Form watch()
   const passwordValue = watch('password') as string
   useEffect(() => {
     setWatchedPassword(passwordValue || '')

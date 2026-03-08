@@ -65,12 +65,15 @@ export function RoleFormDialog({
   useEffect(() => {
     if (role) {
       reset({ name: role.name, description: role.description || '' })
-      setSelectedPermissionIds(role.permissions?.map((p) => p.id) || [])
     } else {
       reset({ name: '', description: '' })
-      setSelectedPermissionIds([])
     }
   }, [role, reset, open])
+
+  useEffect(() => {
+    const ids = role?.permissions?.map((p) => p.id) ?? []
+    queueMicrotask(() => setSelectedPermissionIds(ids))
+  }, [role, open])
 
   const onSubmit = async (data: FormData) => {
     try {
