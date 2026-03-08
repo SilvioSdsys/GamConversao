@@ -1,5 +1,5 @@
 """
-Configuração de testes. Variáveis de ambiente devem ser definidas ANTES de importar app.
+Configuracao de testes. Variaveis de ambiente devem ser definidas ANTES de importar app.
 """
 import os
 
@@ -24,9 +24,9 @@ from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import create_engine, select  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
-from unittest.mock import MagicMock, patch  # noqa: E402
+from unittest.mock import MagicMock, patch, AsyncMock  # noqa: E402
 
-# Mock Redis para testes (evita conexão real)
+# Mock Redis para testes (evita conexao real)
 _redis_mock = MagicMock()
 _redis_mock.ping.return_value = True
 _redis_mock.setex = MagicMock()
@@ -42,6 +42,22 @@ def mock_redis():
         yield _redis_mock
 
 
+@pytest.fixture(autouse=True)
+def disable_rate_limit():
+    """Desabilita rate limit nos testes."""
+    import app.main  # noqa: F401
+    from app.api.v1 import auth
+
+    app_limiter = app.main.app.state.limiter
+    auth_limiter = auth.limiter
+    orig_app, orig_auth = app_limiter.enabled, auth_limiter.enabled
+    app_limiter.enabled = False
+    auth_limiter.enabled = False
+    yield
+    app_limiter.enabled = orig_app
+    auth_limiter.enabled = orig_auth
+
+
 engine = create_engine(
     "sqlite:///:memory:",
     connect_args={"check_same_thread": False},
@@ -54,9 +70,9 @@ def _seed_db(db):
     """Seed manual: Permission, Role, User admin."""
     perms_data = [
         ("audit:read", "Visualizar logs de auditoria"),
-        ("users:read", "Listar e visualizar usuários"),
-        ("sessions:read", "Listar sessões ativas"),
-        ("sessions:revoke", "Revogar sessões"),
+        ("users:read", "Listar e visualizar usuarios"),
+        ("sessions:read", "Listar sessoes ativas"),
+        ("sessions:revoke", "Revogar sessoes"),
     ]
     for name, desc in perms_data:
         p = Permission(name=name, description=desc)
@@ -84,7 +100,7 @@ def _seed_db(db):
 
 @pytest.fixture
 def db():
-    """Fixture de sessão de banco para testes."""
+    """Fixture de sessao de banco para testes."""
     Base.metadata.create_all(bind=engine)
     session = TestingSessionLocal()
     try:
@@ -111,7 +127,7 @@ def client(db):
 
 @pytest.fixture
 def admin_token(client):
-    """Obtém access_token do admin via login."""
+    """Obtem access_token do admin via login."""
     resp = client.post(
         "/api/v1/auth/login",
         json={"email": "admin@test.com", "password": "Admin@2025!"},
@@ -122,5 +138,5 @@ def admin_token(client):
 
 @pytest.fixture
 def auth_headers(admin_token):
-    """Headers de autorização com Bearer token."""
+    """Headers de autorizacao com Bearer token."""
     return {"Authorization": f"Bearer {admin_token}"}
